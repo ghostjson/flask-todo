@@ -1,3 +1,6 @@
+from crypt import methods
+from enum import unique
+import random
 from flask import Flask, render_template, g, request, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
 
@@ -8,14 +11,12 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///db.sqlite'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-class User:
-    def __init__(self, id, username, password):
-        self.id = id
-        self.username = username
-        self.password = password
-
-    def __repr__(self):
-        return f'<User: {self.username}>'
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50))
+    password = db.Column(db.String(50))
+    email = db.Column(db.String(50), unique=True)
+    otp = db.Column(db.Integer)
 
 class Todo(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -26,27 +27,57 @@ db.create_all()
 
 app.secret_key = 'somesecretkeythatonlyishouldknow'
 
-
-users = []
-users.append(User(id=1, username='Anthony', password='password'))
-users.append(User(id=2, username='Becca', password='secret'))
-users.append(User(id=3, username='Carlos', password='somethingsimple'))
-users.append(User(id=4, username='Joyal', password='123456'))
-
-
-
-@app.before_request
-def before_request():
-    g.user = None
-
-    if 'user_id' in session:
-        user = [x for x in users if x.id == session['user_id']]
-        if len(user) > 0:
-            g.user = user[0]
-        else:
-            g.user = None
+@app.route('/register', methods=['GET','POST'])
+def register():
+    if request.method == 'POST':
         
+        username = request.form['username']
+        password = request.form['password']
+        email = request.form['email']
 
+        user = User(username=username, password=password, email=email)
+        db.session.add(user)
+        db.session.commit()
+
+        return redirect(url_for("login"))        
+
+    else:
+        return render_template('register.html')
+
+@app.route('/forgot', methods=['GET', 'POST'])
+def forgotPassword():
+
+    if request.method == 'POST':
+        email = request.form['email']
+
+        user = User.query.filter_by(email=email).first()
+        user.otp = random.randint(1000,9999)
+        print('OTP SEND ' + str(user.otp))
+
+        # Send OTP to email logic
+
+        db.session.commit()
+
+        return render_template('forgot-password-otp.html', email=email)
+    else:
+        return render_template('forgot-password.html')
+
+
+@app.route('/change-password', methods=['POST'])
+def changePassword():
+    otp = int(request.form['otp'])
+    email = request.form['email']
+    new_password = request.form['password']
+
+    user = User.query.filter_by(email=email).first()
+    if user is not None and user.otp == otp:
+        user.password = new_password
+        user.otp = None
+        db.session.commit()
+
+        return redirect('login')
+
+    return redirect(url_for("forgotPassword"))    
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -56,8 +87,9 @@ def login():
         username = request.form['username']
         password = request.form['password']
         
-        user = [x for x in users if x.username == username][0]
-        if user and user.password == password:
+        user = User.query.filter_by(username=username).first()
+        print(user is not None and user.password == password)
+        if user is not None and user.password == password:
             session['user_id'] = user.id
             return redirect(url_for('home'))
 
@@ -67,8 +99,7 @@ def login():
 
 @app.route("/")
 def home():
-    
-    if not g.user:
+    if session['user_id'] is None:
         return redirect(url_for('login'))
 
     todo_list = Todo.query.all()
